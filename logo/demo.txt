@@ -1,0 +1,203 @@
+import os
+import numpy as np
+import pandas as pd
+import cv2
+import multiprocessing
+from functools import partial
+import uuid
+import logging
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from tensorflow.keras.applications import MobileNet
+from tensorflow.keras.layers import Input, Flatten, LSTM, Dense, Dropout, BatchNormalization, concatenate
+from tensorflow.keras.models import Model
+
+# Initialize Flask app
+app = Flask(__name__)
+CORS(app)
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+
+# Load DataFrame
+dataset_path = r'C:\Users\User\Favorites\OneDrive\Desktop\PROJECT3\Front_end\logo\dataset'
+Id = []
+
+# Step 1: Gather image file paths
+for dirname, _, filenames in os.walk(dataset_path):
+    for filename in filenames:
+        Id.append(os.path.join(dirname, filename))
+
+# Step 2: Create DataFrame
+train_df = pd.DataFrame({'filename': Id})
+
+# Ensure the filename column is of string type
+train_df['filename'] = train_df['filename'].astype(str)
+
+# Set label by removing the dataset path and extracting the label from the filename
+train_df['label'] = train_df['filename'].str.replace(r'C:\\Users\\User\\Favorites\\OneDrive\\Desktop\\PROJECT3\\Front_end\\logo\\dataset\\', '', regex=True)
+train_df['label'] = train_df['label'].str.split('/').str[0]
+train_df['label'] = train_df['label'].replace({'output': 'Fake', 'genLogoOutput': 'Genuine'})
+
+# Check initial DataFrame
+logging.info("Initial DataFrame:")
+logging.info(train_df.head())
+logging.info("Initial label counts:")
+logging.info(train_df['label'].value_counts())
+
+# Step 3: Remove classes with fewer than 2 samples
+train_df = train_df.groupby('label').filter(lambda x: len(x) >= 2)
+
+# Check filtered DataFrame
+if train_df.empty:
+    logging.error("No labels meet the criteria of having at least 2 samples. Please check your dataset.")
+else:
+    logging.info("Filtered label counts:")
+    logging.info(train_df['label'].value_counts())
+    logging.info(f"Total samples after filtering: {len(train_df)}")
+
+# Step 5: Function to resize and save images
+def _process_df_chunk(chunk, file_col, label_col, dest_folder):
+    def _process_image(file_path, label):
+        try:
+            img = cv2.imread(file_path)
+            if img is None or img.size == 0:
+                logging.error(f"Error: Could not read file {file_path}")
+                return
+            img = cv2.resize(img, (512, 512))
+            folder_path = os.path.join(dest_folder, str(label))
+            os.makedirs(folder_path, exist_ok=True)  # Create label folder if it doesn't exist
+            file_name = os.path.basename(file_path)
+            name, extension = os.path.splitext(file_name)
+            save_path = os.path.join(folder_path, f"{name}_{uuid.uuid4().hex}{extension}")
+            cv2.imwrite(save_path, img)
+        except Exception as e:
+            logging.error(f"Error processing file {file_path}: {e}")
+
+    for _, row in chunk.iterrows():
+        _process_image(row[file_col], row[label_col])
+
+# Step 6: Resize and save images in parallel
+def resize_save_image(df, file_col, label_col, dest_folder):
+    try:
+        num_processes = multiprocessing.cpu_count()
+        df_chunks = [df[i:i + num_processes] for i in range(0, len(df), num_processes)]
+        
+        os.makedirs(dest_folder, exist_ok=True)  # Create the destination folder if it doesn't exist
+        
+        func = partial(_process_df_chunk, file_col=file_col, label_col=label_col, dest_folder=dest_folder)
+        with multiprocessing.Pool(processes=num_processes) as pool:
+            pool.map(func, df_chunks)
+    except Exception as e:
+        logging.error(f"Error during resizing and saving images: {e}")
+
+# Image Model
+def create_image_model(input_shape):
+    image_input = Input(shape=input_shape, name="image_input")
+    base_model = MobileNet(include_top=False, weights='imagenet', input_shape=input_shape)
+    
+    # Unfreeze the last few layers of MobileNet for fine-tuning
+    for layer in base_model.layers[-20:]:  # Adjust the number of layers to unfreeze
+        layer.trainable = True
+        
+    image_features = Flatten()(base_model(image_input))
+    return Model(inputs=image_input, outputs=image_features, name="ImageModel")
+
+
+# Brand Model
+def create_brand_model(max_sequence_length, embedding_dim):
+    brand_input = Input(shape=(max_sequence_length, embedding_dim), name="brand_input")
+    brand_features = LSTM(64, return_sequences=True)(brand_input)
+    brand_features = LSTM(64)(brand_features)
+    return Model(inputs=brand_input, outputs=brand_features, name="BrandModel")
+
+# Tagline Model
+def create_tagline_model(max_sequence_length, embedding_dim):
+    tagline_input = Input(shape=(max_sequence_length, embedding_dim), name="tagline_input")
+    tagline_features = LSTM(64, return_sequences=True)(tagline_input)
+    tagline_features = LSTM(64)(tagline_features)
+    return Model(inputs=tagline_input, outputs=tagline_features, name="TaglineModel")
+
+# Combined Model
+def create_combined_model(input_shape, max_sequence_length, embedding_dim):
+    image_model = create_image_model(input_shape)
+    brand_model = create_brand_model(max_sequence_length, embedding_dim)
+    tagline_model = create_tagline_model(max_sequence_length, embedding_dim)
+
+    # Merge the outputs of the three models
+    combined_features = concatenate([image_model.output, brand_model.output, tagline_model.output])
+
+    # Add Dense layers after concatenation
+    x = Dense(128, activation='relu')(combined_features)
+    x = Dropout(0.5)(x)
+    x = BatchNormalization()(x)
+    output = Dense(1, activation='sigmoid')(x)
+
+    # Final model
+    model = Model(inputs=[image_model.input, brand_model.input, tagline_model.input], outputs=output, name="CombinedModel")
+
+    # Compile the model
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+    return model
+
+# Prepare the input data
+input_shape = (224, 224, 3)  # Updated input shape to (224, 224, 3)
+max_sequence_length = 10  # Adjust according to your data
+embedding_dim = 100
+
+# Load the combined model
+model = create_combined_model(input_shape, max_sequence_length, embedding_dim)
+
+@app.route('/test', methods=['POST'])
+def test_logo_detection():
+    logging.info("Received request for logo detection.")
+    
+    if 'image' not in request.files:
+        logging.error("No image file provided.")
+        return jsonify({"error": "No image file provided."}), 400
+
+    file = request.files['image']
+
+    if file.filename == '':
+        logging.error("No selected file.")
+        return jsonify({"error": "No selected file."}), 400
+
+    # Read the image using OpenCV
+    img = cv2.imdecode(np.frombuffer(file.read(), np.uint8), cv2.IMREAD_COLOR)
+
+    if img is None:
+        logging.error("Could not read the image.")
+        return jsonify({"error": "Could not read the image."}), 400
+
+    # Resize image for prediction to match the new input shape
+    img_resized = cv2.resize(img, (224, 224))
+    logging.info("Image resized for prediction.")
+
+    # Prepare dummy brand and tagline data
+    dummy_brand = np.zeros((1, max_sequence_length, embedding_dim))
+    dummy_tagline = np.zeros((1, max_sequence_length, embedding_dim))
+
+    # Make prediction
+    y_pred = model.predict([img_resized[np.newaxis, ...], dummy_brand, dummy_tagline])
+    
+    # Extracting probabilities for both classes
+    probability_fake = float(y_pred[0][0])  # Probability of being "Fake"
+    probability_genuine = float(1 - probability_fake)  # Probability of being "Genuine"
+    
+    # Determine predicted class based on higher probability
+    predicted_class = "Genuine" if probability_genuine > probability_fake else "Fake"
+    
+    logging.info(f"Predicted class: {predicted_class} with probabilities - Fake: {probability_fake}, Genuine: {probability_genuine}")
+
+    return jsonify({
+        'predicted_class': predicted_class,
+        'probabilities': {
+            'Fake': probability_fake,
+            'Genuine': probability_genuine
+        }
+    })
+
+# Start the Flask app
+if __name__ == '__main__':
+    app.run(debug=True)

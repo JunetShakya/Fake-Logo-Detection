@@ -1,0 +1,71 @@
+.registration-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    background-color: #f0f2f5;
+}
+
+.registration-form {
+    background-color: white;
+    padding: 30px; /* Increased padding for better spacing */
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    max-width: 1000px; /* Increased maximum width */
+    width: 100%;
+}
+
+h2 {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.form-group {
+    display: flex; /* Align label and input horizontally */
+    align-items: center; /* Center items vertically */
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    width: 30%; /* Set label width */
+    margin-right: 10px; /* Space between label and input */
+    font-weight: bold; /* Bold labels for better visibility */
+}
+
+.form-group input,
+.form-group select {
+    flex: 1; /* Allow input/select to take the remaining space */
+    padding: 12px; /* Increased padding for a more spacious feel */
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    transition: border-color 0.3s;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    border-color: #007BFF;
+    outline: none;
+}
+
+.error {
+    color: red;
+    font-size: 14px;
+    margin-bottom: 15px;
+    text-align: center;
+}
+
+.btn {
+    width: 100%;
+    padding: 12px; /* Increased padding for the button */
+    background-color: #007BFF;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s;
+}
+
+.btn:hover {
+    background-color: #0056b3;
+}

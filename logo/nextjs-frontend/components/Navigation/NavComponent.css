@@ -1,0 +1,50 @@
+/* Container for the navbar */
+.nav-container {
+  width: 100%;
+  background-color: #004080; /* Set a background color */
+  padding: 10px 20px;
+  display: flex;
+  justify-content: space-between; /* Space items between left and right */
+  align-items: center;
+  position: fixed; /* Keeps the navbar at the top when scrolling */
+  top: 0;
+  left: 0;
+  z-index: 1000; /* Ensures the navbar is above other elements */
+}
+
+/* Style for links */
+.nav-link {
+  color: #c0c0c0;
+  text-decoration: none;
+  font-size: 18px;
+  padding: 10px;
+  margin-right: 20px;
+}
+
+.nav-link:hover {
+  background-color: #ece9e9;
+  border-radius: 4px;
+}
+.nav-right {
+  display: flex;
+}
+.nav-right .nav-link {
+  margin-left: 10px;
+}
+
+@media (max-width: 768px) {
+  .nav-container {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .nav-right {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .nav-link {
+    margin-bottom: 10px;
+    margin-right: 0;
+  }
+}
